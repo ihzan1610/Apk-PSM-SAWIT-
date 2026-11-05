@@ -1,1 +1,95 @@
 
+name: Build APK PSM SAWIT
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build PSM SAWIT Debug APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Extract ZIP project
+        run: |
+          mkdir -p project
+          ZIP=$(find . -maxdepth 1 -name '*.zip' | head -n 1)
+          if [ -z "$ZIP" ]; then
+            echo "ZIP proyek tidak ditemukan"
+            exit 1
+          fi
+          unzip -q "$ZIP" -d project
+          test -f project/PSMSAWIT-main/package.json
+          echo "APP_DIR=project/PSMSAWIT-main" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: |
+          cd "$APP_DIR"
+          npm install
+
+      - name: Prepare web files
+        run: |
+          cd "$APP_DIR"
+          node scripts/copy-html2canvas.js
+
+      - name: Generate Android project
+        run: |
+          cd "$APP_DIR"
+          npx cap add android
+          npx cap sync android
+
+      - name: Patch Android native features
+        run: |
+          cd "$APP_DIR"
+          node scripts/patch-android-manifest.js
+          node scripts/patch-android-rawbt.js
+          node scripts/patch-android-imagesaver.js
+          node scripts/patch-android-csvsaver.js
+          node scripts/patch-android-final-native.js
+          node scripts/patch-android-psmnative.js
+          node scripts/patch-android-workmanager.js
+          node scripts/patch-android-icons.js
+
+      - name: Sync Android after patches
+        run: |
+          cd "$APP_DIR"
+          npx cap sync android
+
+      - name: Verify native features
+        run: |
+          cd "$APP_DIR"
+          grep -q 'androidx.work:work-runtime' android/app/build.gradle
+          test -f android/app/src/main/java/com/psmsawit/timbangan/PsmCloudSyncWorker.java
+          grep -q 'PsmCloudSyncWorker.enqueue' android/app/src/main/java/com/psmsawit/timbangan/PsmNativePlugin.java
+
+      - name: Build debug APK
+        run: |
+          cd "$APP_DIR/android"
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Prepare APK
+        run: |
+          mkdir -p output
+          cp "$APP_DIR/android/app/build/outputs/apk/debug/"*.apk output/PSM-SAWIT-debug.apk
+          ls -lh output/
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: PSM-SAWIT-debug-apk
+          path: output/PSM-SAWIT-debug.apk
